@@ -1,6 +1,7 @@
 import streamlit as st
 import os
 from groq import Groq
+from apikey import groq_apikey  # Importar la clave de API desde apikey.py
 
 # Configuración de la página
 st.set_page_config(
@@ -47,10 +48,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# Inicializar el cliente de Groq
-client = Groq(
-    api_key=os.environ.get("GROQ_API_KEY")
-)
+client = Groq(api_key=groq_apikey)
 
 # Prompt inicial para configurar el comportamiento del asistente médico
 SISTEMA_PROMPT = """Eres un asistente médico virtual diseñado para proporcionar información médica general y orientación básica. 
