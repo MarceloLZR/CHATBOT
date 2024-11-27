@@ -1,88 +1,244 @@
-# app.py
-
 import streamlit as st
-from labvision import analyze_image
 import os
-from apikey import groq_apikey
+from groq import Groq
+import base64
+from PIL import Image
+import io
+import requests
+from io import BytesIO
+from apikey import groq_apikey  # Importar la clave de API desde apikey.py
 
-# Configuración de la API de Groq
-os.environ['GROQ_API_KEY'] = groq_apikey
+# Configuración de la página
+st.set_page_config(
+    page_title="Asistente Médico con Análisis de Imágenes",
+    page_icon="💊",
+    layout="wide"
+)
 
-def main():
-    st.title("Chatbot Multimodal para Medicina")
+# Estilos CSS personalizados
+st.markdown("""
+    <style>
+        .body {
+            color: #1f1f1f;  /* Cambia este valor por el color que desees */
+        }
+        h1, h2, h3, h4, h5, h6 {
+            color: #007bff;  /* Cambia el color de los encabezados */
+        }
+        .app-header {
+            display: flex;
+            align-items: center;
+            padding: 1rem;
+            margin-bottom: 2rem;
+            background-color: #f8f9fa; /* Color de fondo del encabezado */
+            border-radius: 10px;
+        }
+        .upload-section {
+            background-color: #e0f7fa; /* Color celeste claro */
+            padding: 1.5rem;
+            border-radius: 10px;
+            margin-bottom: 1rem;
+        }
+        .analysis-section {
+            background-color: #e1f5fe; /* Color celeste claro */
+            padding: 1rem;
+            border-radius: 10px;
+            margin-bottom: 1rem;
+            border: 1px solid #e0e0e0;
+        }
+        .warning-text {
+            color: #d32f2f;
+            font-weight: bold;
+        }
+        .info-box {
+            background-color: #b3e5fc; /* Color celeste */
+            padding: 1rem;
+            border-radius: 5px;
+            margin: 1rem 0;
+        }
+        .chat-message {
+            padding: 1rem;
+            margin: 0.5rem 0;
+            border-radius: 5px;
+        }
+        .user-message {
+            background-color: #b3e5fc; /* Color celeste claro */
+        }
+        .assistant-message {
+            background-color: #e1f5fe; /* Color celeste claro */
+        }
+    </style>
+""", unsafe_allow_html=True)
 
-    # Configuración de la barra lateral para elegir el modo
-    mode = st.sidebar.selectbox("Selecciona el modo:", ["Información sobre Medicamentos", "Generador de Quiz"])
 
-    # Prompt del sistema para la identificación de medicamentos
-    system_prompt = (
-        "Eres un asistente especializado en la identificación de medicamentos a partir de imágenes. "
-        "Cuando recibas una imagen de un medicamento, deberás analizarla y proporcionar información sobre "
-        "sus características, usos, y contraindicaciones. Asegúrate de que las respuestas sean precisas y claras. "
-        "Si no se reconoce el medicamento, indica que la imagen no es clara o que el medicamento no está identificado."
-    )
+# Inicializar el cliente de Groq
+client = Groq(api_key=groq_apikey)
+# Prompt inicial para el asistente
+SISTEMA_PROMPT = """Eres un asistente médico virtual especializado en análisis de medicamentos y consultas médicas generales.
+Debes:
+1. Proporcionar información precisa sobre medicamentos y sus usos
+2. Advertir sobre la importancia de consultar profesionales médicos
+3. Dar información sobre efectos secundarios y precauciones
+4. Mantener un tono profesional pero amigable
+5. Ser claro sobre las limitaciones del servicio"""
 
-    # Prompt del sistema para el generador de quiz
-    system_prompt_quiz = (
-        "Eres un generador de quizzes especializado en temas médicos. Cuando recibas una imagen, "
-        "analízala y crea una pregunta tipo quiz con 5 opciones de respuesta, incluyendo la correcta. "
-        "No reveles la respuesta correcta inicialmente. Indica claramente las opciones en un formato numerado."
-    )
+def get_image_from_url(url):
+    """Descarga una imagen desde una URL"""
+    try:
+        response = requests.get(url)
+        return Image.open(BytesIO(response.content))
+    except Exception as e:
+        st.error(f"Error al descargar la imagen: {str(e)}")
+        return None
 
-    if mode == "Información sobre Medicamentos":
-        st.header("Características, Usos y Contraindicaciones de Medicamentos")
-        image_url = st.text_input("Introduce la URL de la imagen del medicamento:")
-        if image_url:
-            st.image(image_url, caption='Imagen del Medicamento', use_column_width=True)
-            
-            # Botón dedicado para generar información
-            if st.button("Generar Información del Medicamento"):
-                # Análisis de la imagen
-                analyzed_image = analyze_image(image_url)
-                
-                # Supongamos que el análisis devuelve un diccionario con la información
-                # Ejemplo de análisis ficticio basado en la imagen analizada
-                medicamento_info = {
-                    "Nombre": "Panadol para Niños",
-                    "Características": "Botella rosa con etiqueta azul y blanco, diseñada para niños.",
-                    "Usos": "Alivia el dolor leve a moderado, reduce la fiebre.",
-                    "Contraindicaciones": "No usar en niños menores de 2 años o en caso de alergia al paracetamol."
+def encode_image_to_base64(image):
+    """Convierte una imagen a base64"""
+    buffered = io.BytesIO()
+    image.save(buffered, format="JPEG")
+    return base64.b64encode(buffered.getvalue()).decode()
+
+def analyze_medication_image(image_base64):
+    """Analiza la imagen del medicamento usando Groq"""
+    prompt = """Analiza esta imagen de medicamento y proporciona:
+    1. Nombre del medicamento (si es visible)
+    2. Dosis recomendada
+    3. Frecuencia de uso
+    4. Precauciones importantes
+    5. Efectos secundarios comunes
+    6. Interacciones medicamentosas
+    7. Condiciones de almacenamiento"""
+    
+    try:
+        respuesta = client.chat.completions.create(
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image", "image": image_base64}
+                    ]
                 }
+            ],
+            model="mixtral-8x7b-32768",
+            temperature=0.7,
+            max_tokens=2048
+        )
+        return respuesta.choices[0].message.content
+    except Exception as e:
+        return f"Error al analizar la imagen: {str(e)}"
 
-                # Formato de la respuesta en Markdown
-                response = (
-                    f"**Nombre del Medicamento:** {medicamento_info['Nombre']}\n\n"
-                    f"**Características:**\n"
-                    f"- {medicamento_info['Características']}\n\n"
-                    f"**Usos:**\n"
-                    f"- {medicamento_info['Usos']}\n\n"
-                    f"**Contraindicaciones:**\n"
-                    f"- {medicamento_info['Contraindicaciones']}"
-                )
-                
-                # Mostrar la información en formato mejorado
-                st.markdown(response)
+def get_bot_response(prompt, history):
+    """Genera una respuesta del chatbot"""
+    mensajes = [{"role": "system", "content": SISTEMA_PROMPT}]
+    
+    for mensaje in history:
+        mensajes.append({
+            "role": "user" if mensaje["is_user"] else "assistant",
+            "content": mensaje["content"]
+        })
+    
+    mensajes.append({"role": "user", "content": prompt})
+    
+    try:
+        respuesta = client.chat.completions.create(
+            messages=mensajes,
+            model="mixtral-8x7b-32768",
+            temperature=0.7,
+            max_tokens=2048
+        )
+        return respuesta.choices[0].message.content
+    except Exception as e:
+        return f"Error al generar respuesta: {str(e)}"
 
+# Inicializar el estado de la sesión
+if "mensajes" not in st.session_state:
+    st.session_state.mensajes = []
 
+# Título y descripción
+st.markdown("""
+    <div class="app-header">
+        <h1>💊 Asistente Médico Virtual con Análisis de Imágenes</h1>
+    </div>
+""", unsafe_allow_html=True)
 
+st.markdown("""
+    <div class="info-box">
+        <p>Este asistente puede analizar imágenes de medicamentos y responder preguntas médicas generales.</p>
+        <p class="warning-text">⚠️ IMPORTANTE: Esta herramienta es solo informativa. Siempre consulte a un profesional de la salud.</p>
+    </div>
+""", unsafe_allow_html=True)
 
-    elif mode == "Generador de Quiz":
-        st.header("Generador de Preguntas para Estudiantes")
-        image_url = st.text_input("Introduce la URL de una imagen médica:")
+# Sección de carga de imagen
+with st.expander("📸 Análisis de Medicamentos por Imagen", expanded=True):
+    tab1, tab2 = st.tabs(["Subir Imagen", "URL de Imagen"])
+    
+    with tab1:
+        uploaded_file = st.file_uploader("Sube una imagen del medicamento", type=["jpg", "jpeg", "png"])
+        if uploaded_file:
+            image = Image.open(uploaded_file)
+            st.image(image, caption="Imagen cargada", use_column_width=True)
+            if st.button("Analizar imagen subida"):
+                with st.spinner("Analizando imagen..."):
+                    image_base64 = encode_image_to_base64(image)
+                    analysis = analyze_medication_image(image_base64)
+                    st.markdown(analysis)
+                    st.session_state.mensajes.append({"content": f"Análisis de imagen:\n{analysis}", "is_user": False})
+    
+    with tab2:
+        image_url = st.text_input("Ingresa la URL de la imagen del medicamento")
         if image_url:
-            st.image(image_url, caption='Imagen Médica', use_column_width=True)
-            if st.button("Generar Pregunta"):
-                # Análisis de la imagen
-                analyzed_image = analyze_image(image_url)
-                prompt = f"{system_prompt_quiz}\nImagen Análisis: {analyzed_image}\nGenera la pregunta."
-                quiz_response = prompt
-                st.write("Pregunta Generada:", quiz_response)
+            if st.button("Analizar imagen desde URL"):
+                with st.spinner("Descargando y analizando imagen..."):
+                    image = get_image_from_url(image_url)
+                    if image:
+                        st.image(image, caption="Imagen descargada", use_column_width=True)
+                        image_base64 = encode_image_to_base64(image)
+                        analysis = analyze_medication_image(image_base64)
+                        st.markdown(analysis)
+                        st.session_state.mensajes.append({"content": f"Análisis de imagen:\n{analysis}", "is_user": False})
 
-                # Pedir la respuesta correcta
-                if st.button("Mostrar Respuesta Correcta"):
-                    correct_prompt = f"Indica cuál es la respuesta correcta para la pregunta generada."
-                    correct_response = correct_prompt
-                    st.write("Respuesta Correcta:", correct_response)
+# Área de chat
+st.markdown("### 💬 Chat Médico")
 
-if __name__ == "__main__":
-    main()
+# Mostrar historial del chat
+for mensaje in st.session_state.mensajes:
+    with st.chat_message("user" if mensaje["is_user"] else "assistant"):
+        st.write(mensaje["content"])
+
+# Input del usuario
+if prompt := st.chat_input("Escribe tu pregunta médica aquí..."):
+    with st.chat_message("user"):
+        st.write(prompt)
+    
+    st.session_state.mensajes.append({"content": prompt, "is_user": True})
+    
+    with st.chat_message("assistant"):
+        with st.spinner("Procesando respuesta..."):
+            respuesta = get_bot_response(prompt, st.session_state.mensajes)
+            st.write(respuesta)
+    
+    st.session_state.mensajes.append({"content": respuesta, "is_user": False})
+
+# Barra lateral
+with st.sidebar:
+    st.title("ℹ️ Información")
+    st.markdown("""
+    ### Capacidades del Asistente
+    - Análisis de imágenes de medicamentos
+    - Información sobre dosificación
+    - Consultas médicas generales
+    - Efectos secundarios y precauciones
+    
+    ### Recomendaciones
+    - Usa imágenes claras y bien iluminadas
+    - Incluye el empaque del medicamento
+    - Sé específico en tus preguntas
+    
+    ### ⚠️ Limitaciones
+    - No realiza diagnósticos
+    - No reemplaza la consulta médica
+    - No prescribe medicamentos
+    """)
+    
+    if st.button("🗑️ Limpiar Conversación"):
+        st.session_state.mensajes = []
+        st.rerun()
